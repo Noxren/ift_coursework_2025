@@ -6,7 +6,7 @@ The key objective of this coursework is to deliver a rational, efficient, and we
 
 ## Goals
 
-The goal of Coursework One is to design, develop and implement a functional data product based on data extractions for companies listed in the Equity Database and design the its storage in order to facilitate data retrieval.
+The goal of Coursework One is to design, develop and implement a functional data product based on data extractions for companies listed in the Equity Database (Investable Universe) and design the its storage in order to facilitate data retrieval.
 
 By completing this coursework, students will:
 
@@ -182,7 +182,7 @@ Include the following in your documentation:
 The Investment Product Owners (Investment Managers) coordinate and oversee the activity of the wider team, acting as the bridge between the investment vision and the technical implementation. They ensure that the data pipeline supports the long-term strategic goals of investment product design and portfolio construction.
 
 - Strategic Leadership
-  - Define and communicate the investment product vision — articulate the overarching purpose, target audience, and unique value proposition of the proposed investment strategy.
+  - Based on the investable universe, define and communicate the investment product vision — articulate the overarching purpose, target audience, and unique value proposition of the proposed investment strategy.
   - Develop the product roadmap — outline what the product aims to achieve, why it is innovative, the expected benefits, potential costs, and prospective users or clients (e.g., a fund manager, a retail investor, an ESG-focused portfolio).
   - Align business and technical objectives — ensure that the dataset and its design contribute to measurable, investable factors consistent with the intended investment strategy in Coursework Two.
   - Monitor project progress — maintain oversight of milestones, timelines, and deliverable quality.
