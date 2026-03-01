@@ -1,0 +1,461 @@
+import pandas as pd
+from sqlalchemy import create_engine
+from sqlalchemy import text
+
+engine = create_engine("postgresql+psycopg://postgres:postgres@postgres_db_cw:5432/fift")
+
+# Table: company_static
+def get_company_static():
+    query = """
+    SELECT * 
+    FROM systematic_equity.company_static
+    """
+    try:
+        df = pd.read_sql(query, engine)
+        return df
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return None
+
+def get_companies_by_sector(sector_list: list):
+    query = """
+    SELECT * 
+    FROM systematic_equity.company_static
+    WHERE gics_sector IN :sectors;
+    """
+    try:
+        params = {"sectors": tuple(sector_list)}
+        df = pd.read_sql(query, engine, params = params)
+        return df
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return None
+    
+def get_companies_by_industry(industry_list: list):
+    query = """
+    SELECT * 
+    FROM systematic_equity.company_static
+    WHERE gics_industry IN :industries;
+    """
+    try:
+        params = {"industries": tuple(industry_list)}
+        df = pd.read_sql(query, engine, params = params)
+        return df
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return None
+    
+def get_all_sectors():
+    query = """
+    SELECT DISTINCT gics_sector
+    FROM systematic_equity.company_static
+    ORDER BY gics_sector ASC;
+    """
+    try:
+        df = pd.read_sql(query, engine)
+        return df['gics_sector'].tolist()
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return []
+    
+def get_all_industries():
+    query = """
+    SELECT DISTINCT gics_industry
+    FROM systematic_equity.company_static
+    ORDER BY gics_industry ASC;
+    """
+    try:
+        df = pd.read_sql(query, engine)
+        return df['gics_industry'].tolist()
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return []
+
+# Table: daily_ohlcv
+def create_ohlcv_table():
+    query = """
+    CREATE TABLE IF NOT EXISTS systematic_equity.daily_ohlcv (
+        id SERIAL PRIMARY KEY, 
+        symbol VARCHAR(10) NOT NULL,
+        price_date DATE NOT NULL,
+        open_price NUMERIC(14, 4),
+        high_price NUMERIC(14, 4),
+        low_price NUMERIC(14, 4),
+        close_price NUMERIC(14, 4),
+        volume BIGINT,
+        UNIQUE (symbol, price_date)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_date 
+    ON systematic_equity.daily_ohlcv (symbol, price_date DESC);
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(query))
+            conn.commit()
+            print("Table and Index created successfully.")
+    except Exception as e:
+        print(f"Database Error: {e}")
+
+def update_ohlcv_data(data: pd.DataFrame):
+    temp_table = 'temp_ohlcv'
+    data.to_sql(temp_table, engine, schema='systematic_equity', if_exists='replace', index=False)
+    query = """
+    INSERT INTO systematic_equity.daily_ohlcv (symbol, price_date, open_price, high_price, low_price, close_price, volume)
+    SELECT symbol, price_date, open_price, high_price, low_price, close_price, volume 
+    FROM temp_ohlcv
+    ON CONFLICT (symbol, price_date) 
+    DO UPDATE SET 
+        open_price = EXCLUDED.open_price,
+        high_price = EXCLUDED.high_price,
+        low_price = EXCLUDED.low_price,
+        close_price = EXCLUDED.close_price,
+        volume = EXCLUDED.volume;
+    """
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(query))
+            conn.execute(text(f"DROP TABLE systematic_equity.{temp_table};"))
+        print("OHLCV table updated successfully.")
+    except Exception as e:
+        print(f"Database Error: {e}")
+
+def get_ohlcv_data(company_list: list):
+    query = """
+    SELECT *
+    FROM systematic_equity.daily_ohlcv
+    WHERE symbol IN :companies
+    ORDER BY symbol, price_date ASC;
+    """
+    try:
+        params = {"companies": tuple(company_list)}
+        df = pd.read_sql(text(query), engine, params = params)
+        df['price_date'] = pd.to_datetime(df['price_date'])
+        return df
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return None
+
+def get_close_price(symbol: str):
+    query = """
+    SELECT price_date, close_price
+    FROM systematic_equity.daily_ohlcv
+    WHERE symbol = :symbol
+    ORDER BY price_date ASC;
+    """
+    try:
+        params = {"symbol": symbol}
+        df = pd.read_sql(text(query), engine, params = params)
+        df['price_date'] = pd.to_datetime(df['price_date'])
+        return df
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return None
+    
+def get_latest_date():
+    query = """
+    SELECT MAX(price_date)
+    FROM systematic_equity.daily_ohlcv;
+    """
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text(query)).scalar()
+            return result
+    except Exception as e:
+        print(f"Database Error: {e}")
+        return None
+    
+    
+# Table: Liquidity Factors
+def create_liquidity_table():
+    query = """
+    CREATE TABLE IF NOT EXISTS systematic_equity.liquidity_factors (
+        id SERIAL PRIMARY KEY, 
+        symbol VARCHAR(10) NOT NULL,
+        price_date DATE NOT NULL,
+        volume BIGINT,
+        dollar_volume NUMERIC(18, 2),
+        adv_20d BIGINT,
+        adv_60d BIGINT,
+        mdv_20d BIGINT,
+        mdv_60d BIGINT,
+        addv_20d NUMERIC(18, 2),
+        addv_60d NUMERIC(18, 2),
+        mddv_20d NUMERIC(18, 2),
+        mddv_60d NUMERIC(18, 2),
+        amihud_illiquidity_20d NUMERIC(20, 10),
+        amihud_illiquidity_60d NUMERIC(20, 10),
+        UNIQUE (symbol, price_date)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_liquidity_symbol_date 
+    ON systematic_equity.liquidity_factors (symbol, price_date DESC);
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(query))
+            conn.commit()
+            print("Liquidity table and Index created successfully.")
+    except Exception as e:
+        print(f"Database Error: {e}")
+
+def update_liquidity_data(data: pd.DataFrame):
+    temp_table = 'temp_liquidity'
+    data.to_sql(temp_table, engine, schema='systematic_equity', if_exists='replace', index=False)
+    query = """
+    INSERT INTO systematic_equity.liquidity_factors (symbol, price_date, volume, dollar_volume, adv_20d, adv_60d, mdv_20d, mdv_60d,
+    addv_20d, addv_60d, mddv_20d, mddv_60d, amihud_illiquidity_20d, amihud_illiquidity_60d)
+    SELECT symbol, price_date, volume, dollar_volume, adv_20d, adv_60d, mdv_20d, mdv_60d,
+    addv_20d, addv_60d, mddv_20d, mddv_60d, amihud_illiquidity_20d, amihud_illiquidity_60d 
+    FROM temp_liquidity
+    ON CONFLICT (symbol, price_date) 
+    DO UPDATE SET 
+        volume = EXCLUDED.volume,
+        dollar_volume = EXCLUDED.dollar_volume,
+        adv_20d = EXCLUDED.adv_20d,
+        adv_60d = EXCLUDED.adv_60d,
+        mdv_20d = EXCLUDED.mdv_20d,
+        mdv_60d = EXCLUDED.mdv_60d,
+        addv_20d = EXCLUDED.addv_20d,
+        addv_60d = EXCLUDED.addv_60d,
+        mddv_20d = EXCLUDED.mddv_20d,
+        mddv_60d = EXCLUDED.mddv_60d,
+        amihud_illiquidity_20d = EXCLUDED.amihud_illiquidity_20d,
+        amihud_illiquidity_60d = EXCLUDED.amihud_illiquidity_60d;
+    """
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(query))
+            conn.execute(text(f"DROP TABLE systematic_equity.{temp_table};"))
+        print("Liquidity table updated successfully.")
+    except Exception as e:
+        print(f"Database Error: {e}")
+
+# Table: Trend Factors
+def create_trend_table():
+    query = """
+    CREATE TABLE IF NOT EXISTS systematic_equity.trend_factors (
+        id SERIAL PRIMARY KEY, 
+        symbol VARCHAR(10) NOT NULL,
+        price_date DATE NOT NULL,
+        ma200 NUMERIC(14, 4),
+        ma150 NUMERIC(14, 4),
+        ma100 NUMERIC(14, 4),
+        adx14 NUMERIC(6, 2),
+        donchian_high_55 NUMERIC(14, 4),
+        donchian_high_120 NUMERIC(14, 4),
+        price_to_52w_high NUMERIC(6, 4),
+        UNIQUE (symbol, price_date)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_trend_symbol_date 
+    ON systematic_equity.trend_factors (symbol, price_date DESC);
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(query))
+            conn.commit()
+            print("Trend table and Index created successfully.")
+    except Exception as e:
+        print(f"Database Error: {e}")
+
+def update_trend_data(data: pd.DataFrame):
+    temp_table = 'temp_trend'
+    data.to_sql(temp_table, engine, schema='systematic_equity', if_exists='replace', index=False)
+    query = """
+    INSERT INTO systematic_equity.trend_factors (symbol, price_date, ma200, ma150, ma100, adx14, donchian_high_55, donchian_high_120,
+    price_to_52w_high)
+    SELECT symbol, price_date, ma200, ma150, ma100, adx14, donchian_high_55, donchian_high_120, price_to_52w_high 
+    FROM temp_trend
+    ON CONFLICT (symbol, price_date) 
+    DO UPDATE SET 
+        ma200 = EXCLUDED.ma200,
+        ma150 = EXCLUDED.ma150,
+        ma100 = EXCLUDED.ma100,
+        adx14 = EXCLUDED.adx14,
+        donchian_high_55 = EXCLUDED.donchian_high_55,
+        donchian_high_120 = EXCLUDED.donchian_high_120,
+        price_to_52w_high = EXCLUDED.price_to_52w_high;
+    """
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(query))
+            conn.execute(text(f"DROP TABLE systematic_equity.{temp_table};"))
+        print("Trend table updated successfully.")
+    except Exception as e:
+        print(f"Database Error: {e}")
+
+#Table Momentum
+def create_momentum_table():
+    query = """
+    CREATE TABLE IF NOT EXISTS systematic_equity.momentum_factors (
+        id SERIAL PRIMARY KEY, 
+        symbol VARCHAR(10) NOT NULL,
+        price_date DATE NOT NULL,
+        mom_12m NUMERIC(10, 6),
+        mom_6m NUMERIC(10, 6),
+        mom_3m NUMERIC(10, 6),
+        ret_1m NUMERIC(10, 6),
+        ret_3m NUMERIC(10, 6),
+        ret_6m NUMERIC(10, 6),
+        ret_12m NUMERIC(10, 6),
+        risk_adj_mom_12m NUMERIC(14, 6),
+        risk_adj_ret_6m NUMERIC(14, 6),
+        positive_ret_pct_60d NUMERIC(8, 6),
+        positive_ret_prc_120d NUMERIC(8, 6),
+        UNIQUE (symbol, price_date)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_momentum_symbol_date 
+    ON systematic_equity.momentum_factors (symbol, price_date DESC);
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(query))
+            conn.commit()
+            print("Momentum table and Index created successfully.")
+    except Exception as e:
+        print(f"Database Error: {e}")
+
+def update_momentum_data(data: pd.DataFrame):
+    temp_table = 'temp_momentum'
+    data.to_sql(temp_table, engine, schema='systematic_equity', if_exists='replace', index=False)
+    query = """
+    INSERT INTO systematic_equity.momentum_factors (symbol, price_date, mom_12m, mom_6m, mom_3m, ret_1m, ret_3m, ret_6m, ret_12m,
+    risk_adj_mom_12m, risk_adj_ret_6m, positive_ret_pct_60d, positive_ret_prc_120d)
+    SELECT symbol, price_date, mom_12m, mom_6m, mom_3m, ret_1m, ret_3m, ret_6m, ret_12m, risk_adj_mom_12m, risk_adj_ret_6m,
+    positive_ret_pct_60d, positive_ret_prc_120d 
+    FROM temp_momentum
+    ON CONFLICT (symbol, price_date) 
+    DO UPDATE SET 
+        mom_12m = EXCLUDED.mom_12m,
+        mom_6m = EXCLUDED.mom_6m,
+        mom_3m = EXCLUDED.mom_3m,
+        ret_1m = EXCLUDED.ret_1m,
+        ret_3m = EXCLUDED.ret_3m,
+        ret_6m = EXCLUDED.ret_6m,
+        ret_12m = EXCLUDED.ret_12m,
+        risk_adj_mom_12m = EXCLUDED.risk_adj_mom_12m,
+        risk_adj_ret_6m = EXCLUDED.risk_adj_ret_6m,
+        positive_ret_pct_60d = EXCLUDED.positive_ret_pct_60d
+        positive_ret_prc_120d = EXCLUDED.positive_ret_prc_120d;
+    """
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(query))
+            conn.execute(text(f"DROP TABLE systematic_equity.{temp_table};"))
+        print("Momentum table updated successfully.")
+    except Exception as e:
+        print(f"Database Error: {e}")
+
+# Table: Risk Factor
+def create_risk_table():
+    query = """
+    CREATE TABLE IF NOT EXISTS systematic_equity.risk_factors (
+        id SERIAL PRIMARY KEY, 
+        symbol VARCHAR(10) NOT NULL,
+        price_date DATE NOT NULL,
+        vol_20d NUMERIC(10, 6),
+        vol_60d NUMERIC(10, 6),
+        vol_120d NUMERIC(10, 6),
+        downside_vol_60d NUMERIC(10, 6),
+        max_drawdown_6m NUMERIC(10, 6),
+        max_drawdown_1y NUMERIC(10, 6),
+        historical_var_95_1d NUMERIC(20, 4),
+        historical_cvar_95_1d NUMERIC(20, 4),
+        worst_day_ret_1y NUMERIC(10, 6),
+        worst_week_ret_1y NUMERIC(10, 6),
+        UNIQUE (symbol, price_date)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_risk_symbol_date 
+    ON systematic_equity.risk_factors (symbol, price_date DESC);
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(query))
+            conn.commit()
+            print("Risk table and Index created successfully.")
+    except Exception as e:
+        print(f"Database Error: {e}")
+
+def update_risk_data(data: pd.DataFrame):
+    temp_table = 'temp_risk'
+    data.to_sql(temp_table, engine, schema='systematic_equity', if_exists='replace', index=False)
+    query = """
+    INSERT INTO systematic_equity.risk_factors (symbol, price_date, vol_20d, vol_60d, vol_120d, downside_vol_60d, max_drawdown_6m,
+    max_drawdown_1y, historical_var_95_1d, historical_cvar_95_1d, worst_day_ret_1y, worst_week_ret_1y)
+    SELECT symbol, price_date, vol_20d, vol_60d, vol_120d, downside_vol_60d, max_drawdown_6m,
+    max_drawdown_1y, historical_var_95_1d, historical_cvar_95_1d, worst_day_ret_1y, worst_week_ret_1y
+    FROM temp_risk
+    ON CONFLICT (symbol, price_date) 
+    DO UPDATE SET 
+        vol_20d = EXCLUDED.vol_20d,
+        vol_60d = EXCLUDED.vol_60d,
+        vol_120d = EXCLUDED.vol_120d,
+        downside_vol_60d = EXCLUDED.downside_vol_60d,
+        max_drawdown_6m = EXCLUDED.max_drawdown_6m,
+        max_drawdown_1y = EXCLUDED.max_drawdown_1y,
+        historical_var_95_1d = EXCLUDED.historical_var_95_1d,
+        historical_cvar_95_1d = EXCLUDED.historical_cvar_95_1d,
+        worst_day_ret_1y = EXCLUDED.worst_day_ret_1y,
+        worst_week_ret_1y = EXCLUDED.worst_week_ret_1y;
+    """
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(query))
+            conn.execute(text(f"DROP TABLE systematic_equity.{temp_table};"))
+        print("Risk table updated successfully.")
+    except Exception as e:
+        print(f"Database Error: {e}")
+
+#Table: Mean Reversion
+def create_mean_reversion_table():
+    query = """
+    CREATE TABLE IF NOT EXISTS systematic_equity.mean_reversion_factors (
+        id SERIAL PRIMARY KEY, 
+        symbol VARCHAR(10) NOT NULL,
+        price_date DATE NOT NULL,
+        rsi_2d NUMERIC(6, 2),
+        rsi_5d NUMERIC(6, 2),
+        rsi_14d NUMERIC(6, 2),
+        bollinger_pct_20d NUMERIC(10, 6),
+        ret_5d NUMERIC(10, 6),
+        ret_10d NUMERIC(10, 6),
+        UNIQUE (symbol, price_date)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mean_reversion_symbol_date 
+    ON systematic_equity.mean_reversion_factors (symbol, price_date DESC);
+    """
+    try:
+        with engine.connect() as conn:
+            conn.execute(text(query))
+            conn.commit()
+            print("Mean Reversion table and Index created successfully.")
+    except Exception as e:
+        print(f"Database Error: {e}")
+
+def update_mean_reversion_data(data: pd.DataFrame):
+    temp_table = 'temp_mean_reversion'
+    data.to_sql(temp_table, engine, schema='systematic_equity', if_exists='replace', index=False)
+    query = """
+    INSERT INTO systematic_equity.mean_reversion_factors (symbol, price_date, rsi_2d, rsi_5d, rsi_14d, bollinger_pct_20d, ret_5d, ret_10d)
+    SELECT symbol, price_date, rsi_2d, rsi_5d, rsi_14d, bollinger_pct_20d, ret_5d, ret_10d
+    FROM temp_mean_reversion
+    ON CONFLICT (symbol, price_date) 
+    DO UPDATE SET 
+        rsi_2d = EXCLUDED.rsi_2d,
+        rsi_5d = EXCLUDED.rsi_5d,
+        rsi_14d = EXCLUDED.rsi_14d,
+        bollinger_pct_20d = EXCLUDED.bollinger_pct_20d,
+        ret_5d = EXCLUDED.ret_5d,
+        ret_10d = EXCLUDED.ret_10d;
+    """
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(query))
+            conn.execute(text(f"DROP TABLE systematic_equity.{temp_table};"))
+        print("Mean reversion table updated successfully.")
+    except Exception as e:
+        print(f"Database Error: {e}")
